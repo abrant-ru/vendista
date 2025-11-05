@@ -1,0 +1,1 @@
+from .vendista import Type, Picture, ConnectState, Currency, Vendista
