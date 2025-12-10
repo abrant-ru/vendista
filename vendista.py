@@ -1,4 +1,3 @@
-#!/usr/bin/python
 import threading
 import logging
 from time import time, sleep
@@ -106,6 +105,13 @@ class Currency(IntEnum): # ISO 4217
         return lower_byte | upper_byte
 
 class Vendista(object):
+    header_format = struct.Struct('<HH')
+    packet_read_card = struct.Struct('<LHLB')
+    packet_show_qr = struct.Struct('<pp')
+    packet_vend_request = struct.Struct('<HHB')
+    packet_fill_screen = struct.Struct('<H')
+    packet_write_line = struct.Struct('<HHBHHp')
+    packet_card_read_result = struct.Struct('<B8s')
 
     def __init__(self, serial_port, event_queue: Queue, log_level=logging.INFO):
         self.serial_port = serial_port
@@ -119,13 +125,6 @@ class Vendista(object):
         self.connection_error = False
         self.last_check_time = None
         self.error_counter = 10
-        self.header_format = struct.Struct('<HH')
-        self.packet_read_card = struct.Struct('<LHLB')
-        self.packet_show_qr = struct.Struct('<pp')
-        self.packet_vend_request = struct.Struct('<HHB')
-        self.packet_fill_screen = struct.Struct('<H')
-        self.packet_write_line = struct.Struct('<HHBHHp')
-        self.packet_card_read_result = struct.Struct('<B8s')
 
         self.stop_request = threading.Event()
         vendista_loop_thread = threading.Thread(target=self.vendista_loop, daemon=True, name="vendista")
@@ -180,6 +179,7 @@ class Vendista(object):
                     # Check connection status
                     if self.error_counter == 0 and self.connect_state == ConnectState.NONE:
                         self.connect_state = ConnectState.DISCONNECTED
+                        logger.debug("Error counter is 0 while state is NONE")
                     elif self.error_counter > 5 and self.connect_state > ConnectState.NONE:
                         self.connect_state = ConnectState.NONE
                         logger.error(f"Connect state: {self.connect_state}")
@@ -319,27 +319,29 @@ class Vendista(object):
         elif packet_type == Type.CONNECT_STATE_REPORT:
             if len(data) == 1:
                 try:
-                    connect_state = ConnectState(data[0])
+                    new_connect_state = ConnectState(data[0])
                 except ValueError:
-                    connect_state = ConnectState.NONE
+                    new_connect_state = ConnectState.NONE
+                    logger.debug(f"Unknown connect state: {data[0]}")
                 self.error_counter = 0
-                if connect_state != self.connect_state:
-                    if self.connection_error and connect_state == ConnectState.SERVER_CONNECTED:
-                        # Соединение восстановлена
+                if new_connect_state != self.connect_state:
+                    if self.connection_error and new_connect_state == ConnectState.SERVER_CONNECTED:
+                        # Соединение восстановлено
+                        self.connection_error = False
                         self.event_queue.put(dict(
                             sender = self,
                             type = packet_type,
-                            state = str(connect_state)))
+                            state = new_connect_state))
                     elif self.connect_state == ConnectState.SERVER_CONNECTED:
                         # Соединение потеряно
-                        self.connection_error = True 
+                        self.connection_error = True
                         self.event_queue.put(dict(
                             sender = self,
                             type = packet_type,
-                            state = str(connect_state)))
-                    self.connect_state = connect_state
-                    logger.info(f"Connect state: {connect_state}")
-                    if self.connect_state == ConnectState.SERVER_CONNECTED:
+                            state = new_connect_state))
+                    self.connect_state = new_connect_state
+                    logger.info(f"Connect state: {new_connect_state}")
+                    if new_connect_state == ConnectState.SERVER_CONNECTED:
                         self.show_picture(Picture.SELECT_GOODS)
                     else:
                         self.show_picture(Picture.UNAVAILABLE)
@@ -387,4 +389,3 @@ class Vendista(object):
             self.show_picture(Picture.SELECT_GOODS)
         else:
             self.show_picture(Picture.UNAVAILABLE)
-        
